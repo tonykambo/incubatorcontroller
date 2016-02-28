@@ -7,25 +7,58 @@
 
 extern "C" {
   #include "user_interface.h"
-//  #include "Esp.h"
- // #include "gpio.h"
+  #include "gpio.h"
 }
-#include <Arduino.h>
+//#include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 #include <PubSubClient.h> // https://github.com/knolleary/pubsubclient/releases/tag/v2.3
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include "DHT.h"
-#include "SensitiveConfig.h"
+#include "SensitiveConfig_incubatorcontroller.h"
 #include <Time.h>
+
+// void init_lcd();
+// void configureOTA();
+// void init_wifi();
+// void initTimers();
+// void environmentTimerFinished(void *pArg);
+// void trayTiltTimerFinished(void *pArg);
+// void readDHTSensor();
+// void connectWithBroker();
+// void publishPayload();
+// void displayLCD();
+// void debugDisplayPayload();
+// void callback(char* topic, byte* payload, unsigned int length);
 
 // Configure 2 line LCD display with I2C interface
 
 LiquidCrystal_I2C lcd(0x27,16,2);
 //LiquidCrystal_I2C lcd(0x27,20,4);
 
-os_timer_t myTimer;
+// Timers
 
+os_timer_t environmentTimer;
+bool isEnvironmentTimerComplete = false;
+
+os_timer_t trayTiltTimer;
+bool isTrayTiltTimerComplete = false;
+
+
+// State Machine variables
+
+enum SystemState {
+  IDLE,
+  PUBLISHING_ENVIRONMENT_EVENT,
+  TILTING_TRAY_LEFT,
+  TILTING_TRAY_RIGHT,
+  OTA_IN_PROGRESS
+};
+
+SystemState state = IDLE;
 // WiFI credentials
 
 const char* ssid = WIFI_SSID;
@@ -71,9 +104,48 @@ void init_lcd() {
   lcd.setCursor(0,0);
 }
 
+void configureOTA() {
+  // Port defaults to 8266
+  // ArduinoOTA.setPort(8266);
+
+  // Hostname defaults to esp8266-[ChipID]
+    ArduinoOTA.setHostname(IOT_DEVICE_ID);
+
+
+  // No authentication by default
+  // ArduinoOTA.setPassword((const char *)"123");
+
+    ArduinoOTA.onStart([]() {
+      Serial.println("Starting OTA update");
+    });
+    ArduinoOTA.onEnd([]() {
+      Serial.println("\nEnding OTA update");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+    ArduinoOTA.begin();
+    Serial.println("Ready");
+    Serial.print("IP address: ");
+    Serial.print("Test: ");
+    Serial.println(WiFi.localIP());
+}
+
 void init_wifi() {
+  Serial.println("Incubator Controller OTA");
+  Serial.println("Initialising Wifi");
+  WiFi.mode(WIFI_STA);
   Serial.print("Connecting to ");
-  Serial.print(ssid);
+  Serial.println(ssid);
+
 
   if (strcmp (WiFi.SSID().c_str(), ssid) != 0) {
 //if (strcmp, (WiFi.SSID(),ssid.c_str()) != 0) {
@@ -84,11 +156,23 @@ void init_wifi() {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("");
-  Serial.print("WiFi connected, IP address: ");
-  Serial.println(WiFi.localIP());
-}
 
+
+  Serial.println("");
+  Serial.print("WiFi connected with OTA4, IP address: ");
+  Serial.println(WiFi.localIP());
+
+  configureOTA();
+}
+// Initialise Timers
+
+void initTimers() {
+  os_timer_setfn(&environmentTimer, environmentTimerFinished, NULL);
+  os_timer_arm(&environmentTimer,10000, true);
+
+  os_timer_setfn(&trayTiltTimer, trayTiltTimerFinished, NULL);
+  os_timer_arm(&trayTiltTimer,15000, true);
+}
 // Initialisation
 
 void setup() {
@@ -108,6 +192,7 @@ void setup() {
   Serial.println(analogRead(0));
 
   init_wifi();
+  initTimers();
 //----------------- wifi_set_sleep_type(LIGHT_SLEEP_T);
 //----------------- gpio_pin_wakeup_enable(GPIO_ID_PIN(2),GPIO_PIN_INTR_HILEVEL);
 }
@@ -115,16 +200,46 @@ void setup() {
 // *************************************************************
 
 void loop() {
-  readDHTSensor();
-  connectWithBroker();
-  debugDisplayPayload();
-  displayLCD();
-  publishPayload();
 
-  ++counter;
-  delay(15000);
+  if (isEnvironmentTimerComplete == true) {
+    isEnvironmentTimerComplete = false;
+
+    Serial.println("Environment timer completed");
+    ++counter;
+    readDHTSensor();
+    connectWithBroker();
+    debugDisplayPayload();
+    displayLCD();
+    publishPayload();
+  }
+
+  if (isTrayTiltTimerComplete == true) {
+    // change the tilt of the tray
+
+    isTrayTiltTimerComplete = false;
+
+    Serial.println("Tray tilt timer completed");
+    lcd.setCursor(0,2);
+    lcd.print("Tray tilting");
+    delay(500);
+    lcd.setCursor(0,2);
+    lcdClearLine();
+
+  }
+  ArduinoOTA.handle();
+  delay(300);
+  //delay(5000);
 }
 
+// Timer Call Backs
+
+void environmentTimerFinished(void *pArg) {
+  isEnvironmentTimerComplete = true;
+}
+
+void trayTiltTimerFinished(void *pArg) {
+  isTrayTiltTimerComplete = true;
+}
 // ************************************************************************
 
 void readDHTSensor() {
@@ -225,4 +340,9 @@ void debugDisplayPayload() {
 
 void callback(char* topic, byte* payload, unsigned int length) {
  Serial.println("callback invoked");
+}
+
+void lcdClearLine() {
+  lcd.print("                ");
+
 }
