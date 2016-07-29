@@ -32,7 +32,7 @@ extern "C" {
 // void publishPayload();
 // void displayLCD();
 // void debugDisplayPayload();
-// void callback(char* topic, byte* payload, unsigned int length);
+ void callback(char* topic, byte* payload, unsigned int length);
 
 // Configure 2 line LCD display with I2C interface
 
