@@ -140,7 +140,7 @@ void configureOTA() {
 }
 
 void init_wifi() {
-  Serial.println("Incubator Controller OTA");
+  Serial.println("Incubator Controller OTA v6");
   Serial.println("Initialising Wifi");
   WiFi.mode(WIFI_STA);
   Serial.print("Connecting to ");
@@ -219,10 +219,12 @@ void loop() {
     isTrayTiltTimerComplete = false;
 
     Serial.println("Tray tilt timer completed");
-    lcd.setCursor(0,2);
+    //lcd.setCursor(0,2);
+    lcd.setCursor(0,1);
     lcd.print("Tray tilting");
     delay(500);
-    lcd.setCursor(0,2);
+    //lcd.setCursor(0,2);
+    lcd.setCursor(0,1);
     lcdClearLine();
 
   }

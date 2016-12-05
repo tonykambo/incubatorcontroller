@@ -3,3 +3,4 @@
 .gcc-flags.json
 SensitiveConfig_incubatorcontroller.h
 *.sch.lck
+.piolibdeps
