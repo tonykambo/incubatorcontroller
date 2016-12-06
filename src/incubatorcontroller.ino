@@ -98,7 +98,8 @@ float hic; // heat index
 //*** Initialisation ********************************************
 
 void init_lcd() {
-  lcd.init();
+  // SDA = 2 (GPIO4), SCL = 14 (GPIO5)
+  lcd.init(2,14);
   lcd.backlight();
   lcd.clear();
   lcd.setCursor(0,0);
@@ -182,7 +183,7 @@ void setup() {
   Serial.println();
 
   init_lcd();
-  lcd.print("Initialising");
+  lcd.print("Init v2");
 
   // Start the DHT22
 
