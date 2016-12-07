@@ -32,7 +32,7 @@ extern "C" {
 // void publishPayload();
 // void displayLCD();
 // void debugDisplayPayload();
- void callback(char* topic, byte* payload, unsigned int length);
+void callback(char* topic, byte* payload, unsigned int length);
 
 // Configure 2 line LCD display with I2C interface
 
@@ -55,7 +55,8 @@ enum SystemState {
   PUBLISHING_ENVIRONMENT_EVENT,
   TILTING_TRAY_LEFT,
   TILTING_TRAY_RIGHT,
-  OTA_IN_PROGRESS
+  OTA_IN_PROGRESS,
+  MOTOR_SWITCH_DETECTED
 };
 
 SystemState state = IDLE;
@@ -91,10 +92,25 @@ uint16_t volts;
 #define DHTTYPE DHT22
 DHT dht(DHTPIN, DHTTYPE);
 
+// Motor
+
+#define DIRA 0 // D3 = GPIO0
+#define PWMA 5 // D1 = GPIO5
+
+// Switches
+
+#define PORT_MOTOR_SWITCH_LEFT 13 // D7 = GPIO13
+#define PORT_MOTOR_SWITCH_RIGHT 12 // D6 = GPIO12
+#define MOTOR_SWITCH_LEFT 0
+#define MOTOR_SWITCH_RIGHT 1
+int motorSwitchDetected = 0;
+
+
 int counter = 0;
 float h; // humidity
 float t; // temperature
 float hic; // heat index
+
 
 //*** Initialisation ********************************************
 
@@ -179,25 +195,101 @@ void initTimers() {
   os_timer_setfn(&trayTiltTimer, trayTiltTimerFinished, NULL);
   os_timer_arm(&trayTiltTimer,15000, true);
 }
+
+void initSwitches() {
+  // Configure the ports for reading the motor switches
+  publishDebug("Configuring switch sensors");
+  lcdStatus("Init switch sensors");
+  pinMode(PORT_MOTOR_SWITCH_LEFT, INPUT_PULLUP);
+  pinMode(PORT_MOTOR_SWITCH_RIGHT, INPUT_PULLUP);
+  pinMode(BUILTIN_LED, OUTPUT);
+  attachInterrupt(PORT_MOTOR_SWITCH_LEFT, motorSwitchLeftActivated, FALLING);
+  attachInterrupt(PORT_MOTOR_SWITCH_RIGHT, motorSwitchRightActivted, FALLING);
+  delay(1000);
+}
+
+void lcdStatus(String message) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(message);
+}
+// Initialise motor
+
+void initMotor() {
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Setting Motor L");
+  pinMode(DIRA, OUTPUT);
+  pinMode(PWMA, OUTPUT);
+
+  analogWrite(PWMA,0);
+  digitalWrite(DIRA,0);
+  delay(5000);
+
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Starting Motor L");
+  //publishDebug("Starting Motor");
+  analogWrite(PWMA,1000);
+  delay(1000);
+  analogWrite(PWMA,0);
+  delay(1000);
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Finished Motor");
+  delay(1000);
+
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Setting Motor R");
+
+  analogWrite(PWMA,0);
+  digitalWrite(DIRA,1);
+  delay(5000);
+
+
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Starting Motor R");
+
+  analogWrite(PWMA,1000);
+  delay(1000);
+  analogWrite(PWMA,0);
+  delay(1000);
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Finished Motor");
+  delay(1000);
+
+}
 // Initialisation
 
 void setup() {
+
   // Configure serial port
 
   Serial.begin(115200);
   Serial.println();
 
   init_lcd();
-  lcd.print("Init v3");
+  lcd.print("Init v8");
 
   init_wifi();
+
+  connectWithBroker();
+
   // Start the DHT22
   publishDebug("WiFi On");
+
+
   publishDebug("Initialising Sensors");
   dht.begin();
   Serial.println("sensor is starting..");
   Serial.print("Reading Analog...");
   Serial.println(analogRead(0));
+  //publishDebug("Initialising Motor");
+  initMotor();
+  initSwitches();
   publishDebug("Initialising Timers");
   initTimers();
 //----------------- wifi_set_sleep_type(LIGHT_SLEEP_T);
@@ -208,6 +300,15 @@ void setup() {
 
 void loop() {
 
+  switch (state) {
+    case MOTOR_SWITCH_DETECTED:
+      digitalWrite(BUILTIN_LED, HIGH);
+      motorSwitchActivated();
+      break;
+    default:
+      break;
+  }
+
   if (isEnvironmentTimerComplete == true) {
     isEnvironmentTimerComplete = false;
 
@@ -215,7 +316,7 @@ void loop() {
     publishDebug("Environment timer completed");
     ++counter;
     readDHTSensor();
-    connectWithBroker();
+    //connectWithBroker();
     debugDisplayPayload();
     displayLCD();
     publishPayload();
@@ -373,4 +474,30 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void lcdClearLine() {
   lcd.print("                ");
 
+}
+
+// Sensors
+
+void motorSwitchLeftActivated() {
+  state = MOTOR_SWITCH_DETECTED;
+  motorSwitchDetected = MOTOR_SWITCH_LEFT;
+}
+
+void motorSwitchRightActivted() {
+  state = MOTOR_SWITCH_DETECTED;
+  motorSwitchDetected = MOTOR_SWITCH_RIGHT;
+}
+
+void motorSwitchActivated() {
+  state = PUBLISHING_ENVIRONMENT_EVENT;
+  if (motorSwitchDetected == MOTOR_SWITCH_LEFT) {
+    lcdStatus("Switch Left");
+    publishDebug("Left Motor Switch Detected");
+  } else {
+    lcdStatus("Switch Right");
+    publishDebug("Right Motor Switch Detected");
+  }
+  delay(1000);
+  digitalWrite(BUILTIN_LED, LOW);
+  state = IDLE;
 }
