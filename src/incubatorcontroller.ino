@@ -73,6 +73,7 @@ const char* password = WIFI_PASSWORD;
 
 char server[] = IOT_ORG IOT_BASE_URL;
 char topic[] = "iot-2/evt/status/fmt/json";
+char debugTopic[] = "iot-2/evt/status/fmt/debug";
 char authMethod[] = "use-token-auth";
 char token[] = IOT_TOKEN;
 char clientId[] = "d:" IOT_ORG ":" IOT_DEVICE_TYPE ":" IOT_DEVICE_ID;
@@ -118,15 +119,18 @@ void configureOTA() {
 
     ArduinoOTA.onStart([]() {
       Serial.println("Starting OTA update");
+      publishDebug("Starting OTA update");
     });
     ArduinoOTA.onEnd([]() {
       Serial.println("\nEnding OTA update");
+      publishDebug("Ending OTA update");
     });
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
       Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
     });
     ArduinoOTA.onError([](ota_error_t error) {
       Serial.printf("Error[%u]: ", error);
+      publishDebug("OTA Error");
       if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
       else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
       else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
@@ -162,6 +166,7 @@ void init_wifi() {
   Serial.println("");
   Serial.print("WiFi connected with OTA4, IP address: ");
   Serial.println(WiFi.localIP());
+  publishDebug("WiFi Connected with OTA on IP: "+WiFi.localIP());
 
   configureOTA();
 }
@@ -183,16 +188,17 @@ void setup() {
   Serial.println();
 
   init_lcd();
-  lcd.print("Init v2");
+  lcd.print("Init v3");
 
+  init_wifi();
   // Start the DHT22
-
+  publishDebug("WiFi On");
+  publishDebug("Initialising Sensors");
   dht.begin();
   Serial.println("sensor is starting..");
   Serial.print("Reading Analog...");
   Serial.println(analogRead(0));
-
-  init_wifi();
+  publishDebug("Initialising Timers");
   initTimers();
 //----------------- wifi_set_sleep_type(LIGHT_SLEEP_T);
 //----------------- gpio_pin_wakeup_enable(GPIO_ID_PIN(2),GPIO_PIN_INTR_HILEVEL);
@@ -206,6 +212,7 @@ void loop() {
     isEnvironmentTimerComplete = false;
 
     Serial.println("Environment timer completed");
+    publishDebug("Environment timer completed");
     ++counter;
     readDHTSensor();
     connectWithBroker();
@@ -220,13 +227,16 @@ void loop() {
     isTrayTiltTimerComplete = false;
 
     Serial.println("Tray tilt timer completed");
+    publishDebug("Tray tilt time completed");
     //lcd.setCursor(0,2);
     lcd.setCursor(0,1);
     lcd.print("Tray tilting");
+    publishDebug("Tray tilting");
     delay(500);
     //lcd.setCursor(0,2);
     lcd.setCursor(0,1);
     lcdClearLine();
+    publishDebug("Tray tilting completed");
 
   }
   ArduinoOTA.handle();
@@ -254,6 +264,7 @@ void readDHTSensor() {
   // Check if we fail to read from the DHT sensor
   if (isnan(h) || isnan(t)) {
     Serial.println("Failed to read from DHT sensor");
+    publishDebug("Failed to read from DHT sensor");
     //TODO: Do more here
   }
 
@@ -306,6 +317,19 @@ void publishPayload() {
   }
 }
 
+void publishDebug(String debugMessage) {
+  String payload = "{\"d\":{\"myName\":\"ESP8266.Test1\",\"message\":";
+
+  payload += "\""+debugMessage+"\"}";
+
+  if (client.publish(debugTopic, (char *) payload.c_str())) {
+    Serial.println("Published debug OK");
+  } else {
+    Serial.print("Publish failed with error:");
+    Serial.println(client.state());
+  }
+}
+
 void displayLCD() {
 
   static char tempStr[15];
@@ -327,6 +351,7 @@ void displayLCD() {
   lcd.print(firstLine);
   lcd.setCursor(0,1);
   lcd.print(secondLine);
+  publishDebug("Test message2");
 }
 
 void debugDisplayPayload() {
