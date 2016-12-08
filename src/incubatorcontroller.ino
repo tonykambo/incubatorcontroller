@@ -53,10 +53,12 @@ bool isTrayTiltTimerComplete = false;
 enum SystemState {
   IDLE,
   PUBLISHING_ENVIRONMENT_EVENT,
+  TRAY_TILTING,
   TILTING_TRAY_LEFT,
   TILTING_TRAY_RIGHT,
   OTA_IN_PROGRESS,
-  MOTOR_SWITCH_DETECTED
+  MOTOR_SWITCH_DETECTED,
+  TIMER_SWITCH_ACTIVATED
 };
 
 SystemState state = IDLE;
@@ -105,6 +107,9 @@ DHT dht(DHTPIN, DHTTYPE);
 #define MOTOR_SWITCH_RIGHT 1
 int motorSwitchDetected = 0;
 
+// Timer Trigger Switches
+
+#define PORT_TIMER_SWITCH 15 // D8 = GPIO15
 
 int counter = 0;
 float h; // humidity
@@ -189,22 +194,31 @@ void init_wifi() {
 // Initialise Timers
 
 void initTimers() {
+  // This timer is for taking temperature and humidity readings
   os_timer_setfn(&environmentTimer, environmentTimerFinished, NULL);
   os_timer_arm(&environmentTimer,10000, true);
 
+  // This timer is for tilting the tray (by activating the motor)
+
   os_timer_setfn(&trayTiltTimer, trayTiltTimerFinished, NULL);
-  os_timer_arm(&trayTiltTimer,15000, true);
+  os_timer_arm(&trayTiltTimer,30000, true);
 }
 
 void initSwitches() {
   // Configure the ports for reading the motor switches
   publishDebug("Configuring switch sensors");
   lcdStatus("Init switch sensors");
+  // pinMode(PORT_MOTOR_SWITCH_LEFT, INPUT_PULLUP);
+  // pinMode(PORT_MOTOR_SWITCH_RIGHT, INPUT_PULLUP);
+
   pinMode(PORT_MOTOR_SWITCH_LEFT, INPUT_PULLUP);
   pinMode(PORT_MOTOR_SWITCH_RIGHT, INPUT_PULLUP);
+
+  // pinMode(PORT_TIMER_SWITCH, INPUT_PULLUP);
   pinMode(BUILTIN_LED, OUTPUT);
-  attachInterrupt(PORT_MOTOR_SWITCH_LEFT, motorSwitchLeftActivated, FALLING);
-  attachInterrupt(PORT_MOTOR_SWITCH_RIGHT, motorSwitchRightActivted, FALLING);
+  attachInterrupt(PORT_MOTOR_SWITCH_LEFT, motorSwitchLeftActivated, HIGH);
+  attachInterrupt(PORT_MOTOR_SWITCH_RIGHT, motorSwitchRightActivated, HIGH);
+  // attachInterrupt(PORT_TIMER_SWITCH, timerSwitchActivated, FALLING);
   delay(1000);
 }
 
@@ -259,7 +273,7 @@ void initMotor() {
   lcd.clear();
   lcd.setCursor(0,0);
   lcd.print("Finished Motor");
-  delay(1000);
+  delay(500);
 
 }
 // Initialisation
@@ -290,7 +304,8 @@ void setup() {
   //publishDebug("Initialising Motor");
   initMotor();
   initSwitches();
-  publishDebug("Initialising Timers");
+  //publishDebug("Initialising Timers");
+  //initTimers();
   initTimers();
 //----------------- wifi_set_sleep_type(LIGHT_SLEEP_T);
 //----------------- gpio_pin_wakeup_enable(GPIO_ID_PIN(2),GPIO_PIN_INTR_HILEVEL);
@@ -303,8 +318,10 @@ void loop() {
   switch (state) {
     case MOTOR_SWITCH_DETECTED:
       digitalWrite(BUILTIN_LED, HIGH);
-      motorSwitchActivated();
+      motorSwitchAction();
       break;
+    // case TIMER_SWITCH_ACTIVATED:
+    //   timerSwitchAction();
     default:
       break;
   }
@@ -326,19 +343,8 @@ void loop() {
     // change the tilt of the tray
 
     isTrayTiltTimerComplete = false;
-
-    Serial.println("Tray tilt timer completed");
-    publishDebug("Tray tilt time completed");
-    //lcd.setCursor(0,2);
-    lcd.setCursor(0,1);
-    lcd.print("Tray tilting");
-    publishDebug("Tray tilting");
-    delay(500);
-    //lcd.setCursor(0,2);
-    lcd.setCursor(0,1);
-    lcdClearLine();
-    publishDebug("Tray tilting completed");
-
+    tiltTray();
+    state = TRAY_TILTING;
   }
   ArduinoOTA.handle();
   delay(300);
@@ -475,21 +481,41 @@ void lcdClearLine() {
   lcd.print("                ");
 
 }
+// Motor control
+
+void switchOffMotor() {
+  analogWrite(PWMA,0);
+  publishDebug("Switching off motor");
+  lcdStatus("Motor off");
+}
+
+void tiltTray() {
+  analogWrite(PWMA,500);
+  publishDebug("Tilting tray");
+  lcdStatus("Tilting tray");
+}
 
 // Sensors
 
 void motorSwitchLeftActivated() {
   state = MOTOR_SWITCH_DETECTED;
   motorSwitchDetected = MOTOR_SWITCH_LEFT;
+//  delay(100);
 }
 
-void motorSwitchRightActivted() {
+void motorSwitchRightActivated() {
   state = MOTOR_SWITCH_DETECTED;
   motorSwitchDetected = MOTOR_SWITCH_RIGHT;
+  //delay(100);
 }
 
-void motorSwitchActivated() {
+// void timerSwitchActivated() {
+//   state = TIMER_SWITCH_ACTIVATED;
+// }
+
+void motorSwitchAction() {
   state = PUBLISHING_ENVIRONMENT_EVENT;
+  switchOffMotor();
   if (motorSwitchDetected == MOTOR_SWITCH_LEFT) {
     lcdStatus("Switch Left");
     publishDebug("Left Motor Switch Detected");
@@ -497,7 +523,15 @@ void motorSwitchActivated() {
     lcdStatus("Switch Right");
     publishDebug("Right Motor Switch Detected");
   }
-  delay(1000);
   digitalWrite(BUILTIN_LED, LOW);
+  delay(100);
   state = IDLE;
 }
+
+// void timerSwitchAction() {
+//   state = IDLE;
+//   publishDebug("Timer Switch Activated");
+//   lcdStatus("Timer Switch On");
+//   digitalWrite(BUILTIN_LED, LOW);
+//   initTimers();
+// }
