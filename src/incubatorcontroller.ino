@@ -214,11 +214,10 @@ void initSwitches() {
   pinMode(PORT_MOTOR_SWITCH_LEFT, INPUT_PULLUP);
   pinMode(PORT_MOTOR_SWITCH_RIGHT, INPUT_PULLUP);
 
-  // pinMode(PORT_TIMER_SWITCH, INPUT_PULLUP);
   pinMode(BUILTIN_LED, OUTPUT);
-  attachInterrupt(PORT_MOTOR_SWITCH_LEFT, motorSwitchLeftActivated, HIGH);
-  attachInterrupt(PORT_MOTOR_SWITCH_RIGHT, motorSwitchRightActivated, HIGH);
-  // attachInterrupt(PORT_TIMER_SWITCH, timerSwitchActivated, FALLING);
+  //attachInterrupt(PORT_MOTOR_SWITCH_LEFT, motorSwitchLeftActivated, HIGH);
+  //attachInterrupt(PORT_MOTOR_SWITCH_RIGHT, motorSwitchRightActivated, HIGH);
+
   delay(1000);
 }
 
@@ -230,6 +229,7 @@ void lcdStatus(String message) {
 // Initialise motor
 
 void initMotor() {
+  publishDebug("Testing Motor");
   lcd.clear();
   lcd.setCursor(0,0);
   lcd.print("Setting Motor L");
@@ -273,6 +273,7 @@ void initMotor() {
   lcd.clear();
   lcd.setCursor(0,0);
   lcd.print("Finished Motor");
+  publishDebug("Completed Motor Test");
   delay(500);
 
 }
@@ -301,11 +302,8 @@ void setup() {
   Serial.println("sensor is starting..");
   Serial.print("Reading Analog...");
   Serial.println(analogRead(0));
-  //publishDebug("Initialising Motor");
   initMotor();
   initSwitches();
-  //publishDebug("Initialising Timers");
-  //initTimers();
   initTimers();
 //----------------- wifi_set_sleep_type(LIGHT_SLEEP_T);
 //----------------- gpio_pin_wakeup_enable(GPIO_ID_PIN(2),GPIO_PIN_INTR_HILEVEL);
@@ -314,6 +312,23 @@ void setup() {
 // *************************************************************
 
 void loop() {
+
+  // read Motor Switches
+  int motorSwitchLeft = digitalRead(PORT_MOTOR_SWITCH_LEFT);
+  int motorSwitchRight = digitalRead(PORT_MOTOR_SWITCH_RIGHT);
+
+  if (motorSwitchLeft == HIGH) {
+    switchOffMotor();
+    publishDebug("Motor Switch Left is HIGH");
+    lcdStatus("Motor SW Left High");
+    delay(100);
+  }
+  if (motorSwitchRight == HIGH) {
+    switchOffMotor();
+    publishDebug("Motor Switch Right is HIGH");
+    lcdStatus("Motor SW Right High");
+    delay(100);
+  }
 
   switch (state) {
     case MOTOR_SWITCH_DETECTED:
@@ -347,7 +362,7 @@ void loop() {
     state = TRAY_TILTING;
   }
   ArduinoOTA.handle();
-  delay(300);
+  //delay(300);
   //delay(5000);
 }
 
