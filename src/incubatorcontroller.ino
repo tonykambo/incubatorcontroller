@@ -317,6 +317,10 @@ void loop() {
   int motorSwitchLeft = digitalRead(PORT_MOTOR_SWITCH_LEFT);
   int motorSwitchRight = digitalRead(PORT_MOTOR_SWITCH_RIGHT);
 
+  // TODO: Capture the state of the motor
+  // so we know when to just stop and wait or
+  // we're just taking off
+  
   if (motorSwitchLeft == HIGH) {
     switchOffMotor();
     publishDebug("Motor Switch Left is HIGH");
@@ -505,6 +509,25 @@ void switchOffMotor() {
 }
 
 void tiltTray() {
+  // TODO: Check current position of motor
+  // If LEFT switch is currently active then tilt to Right and vice versa
+
+  // Read left switch
+
+  int leftMotorSwitch = digitalRead(PORT_MOTOR_SWITCH_LEFT);
+  int rightMotorSwitch = digitalRead(PORT_MOTOR_SWITCH_RIGHT);
+  if (leftMotorSwitch == HIGH) {
+    // left switch is Activa therefore move motor to right
+
+    digitalWrite(DIRA,0);
+
+  } else if (rightMotorSwitch == HIGH) {
+    // move to the left
+    digitalWrite(DIRA,1);
+  } else {
+    // if no switch is active then default to one side (right)
+    digitalWrite(DIRA, 0)
+  }
   analogWrite(PWMA,500);
   publishDebug("Tilting tray");
   lcdStatus("Tilting tray");
