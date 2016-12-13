@@ -9,7 +9,7 @@ extern "C" {
   #include "user_interface.h"
   #include "gpio.h"
 }
-//#include <Arduino.h>
+
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
@@ -21,17 +21,6 @@ extern "C" {
 #include "SensitiveConfig_incubatorcontroller.h"
 #include <Time.h>
 
-// void init_lcd();
-// void configureOTA();
-// void init_wifi();
-// void initTimers();
-// void environmentTimerFinished(void *pArg);
-// void trayTiltTimerFinished(void *pArg);
-// void readDHTSensor();
-// void connectWithBroker();
-// void publishPayload();
-// void displayLCD();
-// void debugDisplayPayload();
 void callback(char* topic, byte* payload, unsigned int length);
 
 // Configure 2 line LCD display with I2C interface
@@ -61,18 +50,22 @@ enum SystemState {
   TIMER_SWITCH_ACTIVATED
 };
 
+enum MotorPosition {
+  LEFT,
+  RIGHT,
+  MIDDLE
+};
+
 SystemState state = IDLE;
+
+MotorPosition currentMotorPosition = MIDDLE;
+
 // WiFI credentials
 
 const char* ssid = WIFI_SSID;
 const char* password = WIFI_PASSWORD;
 
 // IBM Internet of Things MQTT configuration
-
-//#define ORG "ow3qa2"
-//#define DEVICE_TYPE "AmicaNodeMCU"
-//#define DEVICE_ID "LB01"
-//#define TOKEN "d8ehyDPvxjWVI1n6Kn"
 
 char server[] = IOT_ORG IOT_BASE_URL;
 char topic[] = "iot-2/evt/status/fmt/json";
@@ -134,7 +127,6 @@ void configureOTA() {
   // Hostname defaults to esp8266-[ChipID]
     ArduinoOTA.setHostname(IOT_DEVICE_ID);
 
-
   // No authentication by default
   // ArduinoOTA.setPassword((const char *)"123");
 
@@ -174,7 +166,6 @@ void init_wifi() {
 
 
   if (strcmp (WiFi.SSID().c_str(), ssid) != 0) {
-//if (strcmp, (WiFi.SSID(),ssid.c_str()) != 0) {
     WiFi.begin(ssid, password);
   }
 
@@ -182,43 +173,47 @@ void init_wifi() {
     delay(500);
     Serial.print(".");
   }
-
-
   Serial.println("");
   Serial.print("WiFi connected with OTA4, IP address: ");
   Serial.println(WiFi.localIP());
   publishDebug("WiFi Connected with OTA on IP: "+WiFi.localIP());
-
   configureOTA();
 }
-// Initialise Timers
 
-void initTimers() {
+void initMotorTimer() {
+  // This timer is for tilting the tray (by activating the motor)
+  os_timer_setfn(&trayTiltTimer, trayTiltTimerFinished, NULL);
+}
+
+void initEnvironmentTimer() {
   // This timer is for taking temperature and humidity readings
   os_timer_setfn(&environmentTimer, environmentTimerFinished, NULL);
-  os_timer_arm(&environmentTimer,10000, true);
+}
 
-  // This timer is for tilting the tray (by activating the motor)
-
-  os_timer_setfn(&trayTiltTimer, trayTiltTimerFinished, NULL);
+void startMotorTimer() {
   os_timer_arm(&trayTiltTimer,30000, true);
+}
+
+void stopMotorTimer() {
+  os_timer_disarm(&trayTiltTimer);
+}
+
+void startEnvironmentTimer() {
+  os_timer_arm(&environmentTimer,10000, true);
+}
+
+void stopEnvironmentTimer() {
+  os_timer_disarm(&environmentTimer);
 }
 
 void initSwitches() {
   // Configure the ports for reading the motor switches
   publishDebug("Configuring switch sensors");
   lcdStatus("Init switch sensors");
-  // pinMode(PORT_MOTOR_SWITCH_LEFT, INPUT_PULLUP);
-  // pinMode(PORT_MOTOR_SWITCH_RIGHT, INPUT_PULLUP);
-
   pinMode(PORT_MOTOR_SWITCH_LEFT, INPUT_PULLUP);
   pinMode(PORT_MOTOR_SWITCH_RIGHT, INPUT_PULLUP);
-
   pinMode(BUILTIN_LED, OUTPUT);
-  //attachInterrupt(PORT_MOTOR_SWITCH_LEFT, motorSwitchLeftActivated, HIGH);
-  //attachInterrupt(PORT_MOTOR_SWITCH_RIGHT, motorSwitchRightActivated, HIGH);
-
-  delay(1000);
+  delay(500);
 }
 
 void lcdStatus(String message) {
@@ -226,57 +221,105 @@ void lcdStatus(String message) {
   lcd.setCursor(0, 0);
   lcd.print(message);
 }
-// Initialise motor
 
-void initMotor() {
-  publishDebug("Testing Motor");
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Setting Motor L");
+void tiltMotor(MotorPosition targetPosition) {
+  // set the direction of moving the motor
+  if (targetPosition == LEFT) {
+    digitalWrite(DIRA,1);
+    publishDebug("Tilting motor LEFT");
+    lcdStatus("Tilting LEFT");
+  } else {
+    digitalWrite(DIRA,0);
+    publishDebug("Tilting motor RIGHT");
+    lcdStatus("Tilting RIGHT");
+  }
+
+  // start the motor moving
+  analogWrite(PWMA,1000);
+
+  int motorSwitchLeft = digitalRead(PORT_MOTOR_SWITCH_LEFT);
+  int motorSwitchRight = digitalRead(PORT_MOTOR_SWITCH_RIGHT);
+
+  // Continue looping until a switch is Activated
+  // TODO: Add add a safety timer so if we don't detect a switch
+  // within a certain time we switch off the motor
+  // in case a switch is faulty
+
+  if (targetPosition == LEFT) {
+    // only check for the left switch as the right switch would already
+    // be active
+    while (motorSwitchLeft != HIGH) {
+      motorSwitchLeft = digitalRead(PORT_MOTOR_SWITCH_LEFT);
+      delay(100);
+    }
+  } else {
+    while (motorSwitchRight != HIGH) {
+      motorSwitchRight = digitalRead(PORT_MOTOR_SWITCH_RIGHT);
+      delay(100);
+    }
+  }
+
+  switchOffMotor();
+  if (targetPosition == LEFT) {
+    currentMotorPosition = LEFT;
+    publishDebug("Tilt completed to Left");
+  } else {
+    currentMotorPosition = RIGHT;
+    publishDebug("Tilt completed to right");
+  }
+  lcdStatus("Finished tilting");
+
+}
+
+
+// Estbalish a known position of the motor
+// If the neither switch is active set it to the default side
+// If a switch is active, leave it there
+
+void calibrateMotor() {
+
+  publishDebug("Calibrating motor");
+  lcdStatus("Calibrating motor");
+
   pinMode(DIRA, OUTPUT);
   pinMode(PWMA, OUTPUT);
 
-  analogWrite(PWMA,0);
-  digitalWrite(DIRA,0);
-  delay(5000);
+  // read Motor Switches
+  int motorSwitchLeft = digitalRead(PORT_MOTOR_SWITCH_LEFT);
+  int motorSwitchRight = digitalRead(PORT_MOTOR_SWITCH_RIGHT);
 
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Starting Motor L");
-  //publishDebug("Starting Motor");
-  analogWrite(PWMA,1000);
-  delay(1000);
-  analogWrite(PWMA,0);
-  delay(1000);
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Finished Motor");
-  delay(1000);
+  // TODO: Capture the state of the motor
+  // so we know when to just stop and wait or
+  // we're just taking off
 
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Setting Motor R");
+  if (motorSwitchLeft == HIGH) {
+    // Make sure motor is off
+    switchOffMotor();
+    publishDebug("Motor Switch Left is HIGH");
+    lcdStatus("Motor SW Left High");
+    currentMotorPosition = LEFT;
+    delay(100);
+    return;
+  }
+  if (motorSwitchRight == HIGH) {
+    switchOffMotor();
+    publishDebug("Motor Switch Right is HIGH");
+    lcdStatus("Motor SW Right High");
+    currentMotorPosition = RIGHT;
+    delay(100);
+    return;
+  }
 
-  analogWrite(PWMA,0);
-  digitalWrite(DIRA,1);
-  delay(5000);
+  // Neither switch is on
+  switchOffMotor();
+  publishDebug("Motor is in middle");
+  lcdStatus("Motor in middle");
+  currentMotorPosition = MIDDLE;
 
-
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Starting Motor R");
-
-  analogWrite(PWMA,1000);
-  delay(1000);
-  analogWrite(PWMA,0);
-  delay(1000);
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("Finished Motor");
-  publishDebug("Completed Motor Test");
-  delay(500);
-
+  // Track motor to default position
+  tiltMotor(LEFT);
 }
+
 // Initialisation
 
 void setup() {
@@ -287,24 +330,29 @@ void setup() {
   Serial.println();
 
   init_lcd();
-  lcd.print("Init v8");
-
+  lcdStatus("Initialisaing");
   init_wifi();
-
   connectWithBroker();
 
   // Start the DHT22
   publishDebug("WiFi On");
-
-
   publishDebug("Initialising Sensors");
   dht.begin();
   Serial.println("sensor is starting..");
   Serial.print("Reading Analog...");
   Serial.println(analogRead(0));
-  initMotor();
+
   initSwitches();
-  initTimers();
+  calibrateMotor();
+
+  // Start the timers
+  initMotorTimer();
+  startMotorTimer();
+  initEnvironmentTimer();
+  startEnvironmentTimer();
+
+  publishDebug("Setup complete");
+  lcdStatus("Setup complete");
 //----------------- wifi_set_sleep_type(LIGHT_SLEEP_T);
 //----------------- gpio_pin_wakeup_enable(GPIO_ID_PIN(2),GPIO_PIN_INTR_HILEVEL);
 }
@@ -312,39 +360,6 @@ void setup() {
 // *************************************************************
 
 void loop() {
-
-  // read Motor Switches
-  int motorSwitchLeft = digitalRead(PORT_MOTOR_SWITCH_LEFT);
-  int motorSwitchRight = digitalRead(PORT_MOTOR_SWITCH_RIGHT);
-
-  // TODO: Capture the state of the motor
-  // so we know when to just stop and wait or
-  // we're just taking off
-  
-  if (motorSwitchLeft == HIGH) {
-    switchOffMotor();
-    publishDebug("Motor Switch Left is HIGH");
-    lcdStatus("Motor SW Left High");
-    delay(100);
-  }
-  if (motorSwitchRight == HIGH) {
-    switchOffMotor();
-    publishDebug("Motor Switch Right is HIGH");
-    lcdStatus("Motor SW Right High");
-    delay(100);
-  }
-
-  switch (state) {
-    case MOTOR_SWITCH_DETECTED:
-      digitalWrite(BUILTIN_LED, HIGH);
-      motorSwitchAction();
-      break;
-    // case TIMER_SWITCH_ACTIVATED:
-    //   timerSwitchAction();
-    default:
-      break;
-  }
-
   if (isEnvironmentTimerComplete == true) {
     isEnvironmentTimerComplete = false;
 
@@ -362,17 +377,24 @@ void loop() {
     // change the tilt of the tray
 
     isTrayTiltTimerComplete = false;
-    tiltTray();
+    stopMotorTimer();
     state = TRAY_TILTING;
+    if (currentMotorPosition == LEFT) {
+      tiltMotor(RIGHT);
+    } else {
+      tiltMotor(LEFT);
+    }
+    startMotorTimer();
+    state = IDLE;
   }
   ArduinoOTA.handle();
-  //delay(300);
-  //delay(5000);
 }
 
 // Timer Call Backs
 
 void environmentTimerFinished(void *pArg) {
+  // don't do too much in here. Just set the state
+  // and handle it in the main loop
   isEnvironmentTimerComplete = true;
 }
 
@@ -477,7 +499,6 @@ void displayLCD() {
   lcd.print(firstLine);
   lcd.setCursor(0,1);
   lcd.print(secondLine);
-  publishDebug("Test message2");
 }
 
 void debugDisplayPayload() {
@@ -498,7 +519,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 void lcdClearLine() {
   lcd.print("                ");
-
 }
 // Motor control
 
@@ -508,48 +528,17 @@ void switchOffMotor() {
   lcdStatus("Motor off");
 }
 
-void tiltTray() {
-  // TODO: Check current position of motor
-  // If LEFT switch is currently active then tilt to Right and vice versa
-
-  // Read left switch
-
-  int leftMotorSwitch = digitalRead(PORT_MOTOR_SWITCH_LEFT);
-  int rightMotorSwitch = digitalRead(PORT_MOTOR_SWITCH_RIGHT);
-  if (leftMotorSwitch == HIGH) {
-    // left switch is Activa therefore move motor to right
-
-    digitalWrite(DIRA,0);
-
-  } else if (rightMotorSwitch == HIGH) {
-    // move to the left
-    digitalWrite(DIRA,1);
-  } else {
-    // if no switch is active then default to one side (right)
-    digitalWrite(DIRA, 0)
-  }
-  analogWrite(PWMA,500);
-  publishDebug("Tilting tray");
-  lcdStatus("Tilting tray");
-}
-
 // Sensors
 
 void motorSwitchLeftActivated() {
   state = MOTOR_SWITCH_DETECTED;
   motorSwitchDetected = MOTOR_SWITCH_LEFT;
-//  delay(100);
 }
 
 void motorSwitchRightActivated() {
   state = MOTOR_SWITCH_DETECTED;
   motorSwitchDetected = MOTOR_SWITCH_RIGHT;
-  //delay(100);
 }
-
-// void timerSwitchActivated() {
-//   state = TIMER_SWITCH_ACTIVATED;
-// }
 
 void motorSwitchAction() {
   state = PUBLISHING_ENVIRONMENT_EVENT;
@@ -565,6 +554,12 @@ void motorSwitchAction() {
   delay(100);
   state = IDLE;
 }
+
+// External switch trigger - TBD
+
+// void timerSwitchActivated() {
+//   state = TIMER_SWITCH_ACTIVATED;
+// }
 
 // void timerSwitchAction() {
 //   state = IDLE;
